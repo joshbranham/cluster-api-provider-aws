@@ -664,6 +664,15 @@ func (s *Service) runInstance(role string, i *infrav1.Instance) (*infrav1.Instan
 		}
 	}
 
+	// Test if we succeed via DryRun, otherwise remove NetworkInterface tags and try again. We may still fail
+	// for other issues even after removing NetworkInterface tags, which is captured in the later error handling below.
+	ok, err := s.runInstancesForInputAllowed(context.TODO(), input)
+	if !ok && err != nil {
+		return nil, errors.Wrap(err, "failed to run instance")
+	} else if !ok && err == nil {
+		input.TagSpecifications = dropNetworkInterfaceTags(input)
+	}
+
 	out, err := s.EC2Client.RunInstancesWithContext(context.TODO(), input)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to run instance")
@@ -704,6 +713,39 @@ func volumeToBlockDeviceMapping(v *infrav1.Volume) *ec2.BlockDeviceMapping {
 		DeviceName: &v.DeviceName,
 		Ebs:        ebsDevice,
 	}
+}
+
+// runInstancesForInputAllowed will set DryRun=true on the input, and test if the RunInstances call will succeed,
+// returning a bool and any additional error. Note that the aws-sdk behavior is to return an error whether the DryRun works
+// or not.
+func (s *Service) runInstancesForInputAllowed(ctx context.Context, input *ec2.RunInstancesInput) (bool, error) {
+	input.DryRun = ptr.To(true)
+	_, err := s.EC2Client.RunInstancesWithContext(ctx, input)
+	input.DryRun = nil
+
+	// This is the success path, the API returns an error with the code 'DryRunOperation'
+	if awserrors.IsDryRunOperationError(err) {
+		s.scope.Debug("DryRun validation passed for RunInstances")
+		return true, nil
+	} else if awserrors.IsPermissionsError(err) {
+		// This is the failure path, signifying we lack permissions to perform RunInstances with the configured input
+		s.scope.Debug("DryRun validation failed for RunInstances")
+		return false, nil
+	}
+
+	// Any other error scenario means failure
+	return false, err
+}
+
+func dropNetworkInterfaceTags(input *ec2.RunInstancesInput) []*ec2.TagSpecification {
+	var tagSpecifications []*ec2.TagSpecification
+	for _, spec := range input.TagSpecifications {
+		if *spec.ResourceType != ec2.ResourceTypeNetworkInterface {
+			tagSpecifications = append(tagSpecifications, spec)
+		}
+	}
+
+	return tagSpecifications
 }
 
 // GetInstanceSecurityGroups returns a map from ENI id to the security groups applied to that ENI

@@ -29,6 +29,7 @@ const (
 	AssociationIDNotFound             = "InvalidAssociationID.NotFound"
 	AuthFailure                       = "AuthFailure"
 	BucketAlreadyOwnedByYou           = "BucketAlreadyOwnedByYou"
+	DryRunOperation                   = "DryRunOperation"
 	EIPNotFound                       = "InvalidElasticIpID.NotFound"
 	GatewayNotFound                   = "InvalidGatewayID.NotFound"
 	GroupNotFound                     = "InvalidGroup.NotFound"
@@ -219,5 +220,20 @@ func IsPermissionNotFoundError(err error) bool {
 			return false
 		}
 	}
+	return false
+}
+
+// IsDryRunOperationError returns whether the error is DryRunOperation, which signifies the DryRun operation
+// was successful.
+func IsDryRunOperationError(err error) bool {
+	if code, ok := Code(err); ok {
+		switch code {
+		case DryRunOperation:
+			return true
+		default:
+			return false
+		}
+	}
+
 	return false
 }
